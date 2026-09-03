@@ -1,2 +1,22 @@
+# переменные окружения
 /.env
+
+# виртуальное окружение
 /.venv/
+
+# IDE
+/.idea/
+
+# Python
+__pycache__/
+*.pyc
+
+# Celery beat
+celerybeat-schedule*
+
+# статика
+/staticfiles/
+
+# покрытие тестов
+.coverage
+htmlcov/
