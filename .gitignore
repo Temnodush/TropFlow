@@ -1,22 +1,43 @@
-# переменные окружения
+# --- Переменные окружения (секреты в репозиторий не попадают) ---
 /.env
+/.env.template
 
-# виртуальное окружение
+# --- Виртуальные окружения ---
 /.venv/
+/venv/
+env/
 
-# IDE
-/.idea/
-
-# Python
+# --- Python ---
 __pycache__/
-*.pyc
+*.py[cod]
+*.egg-info/
 
-# Celery beat
-celerybeat-schedule*
-
-# статика
+# --- Django ---
+*.sqlite3
+/media/
 /staticfiles/
 
-# покрытие тестов
+# --- Celery ---
+celerybeat-schedule*
+celerybeat.pid
+
+# --- Тесты и покрытие ---
 .coverage
+.coverage.*
+coverage.txt
+coverage.xml
 htmlcov/
+.pytest_cache/
+.pytest_tmp_cache/
+pytest-cache-files-*/
+
+# --- Логи и pid-файлы сервисов ---
+*.log
+*.pid
+
+# --- IDE и ОС ---
+/.idea/
+.vscode/
+*.swp
+Thumbs.db
+.DS_Store

@@ -5,8 +5,11 @@ from pathlib import Path
 from celery.schedules import crontab
 from dotenv import load_dotenv
 
-# Загрузка переменных окружения
-load_dotenv(override=True)
+# Загрузка переменных окружения.
+# override=False — важно для Docker: файл .env лежит рядом с manage.py и внутри
+# контейнера тоже, и при override=True он затирал бы переменные, переданные
+# сервису через docker compose (например, DB_HOST=db превращался бы в localhost).
+load_dotenv(override=False)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -74,15 +77,26 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
+#
+# Параметры подключения берутся из переменных окружения.
+# В Docker их подставляет docker-compose.yml в виде DB_* (там хост — сервис db,
+# а не localhost). При запуске без Docker значения читаются из .env, где
+# используются те же имена, что и у контейнера базы — POSTGRES_*.
+
+
+def env(name, fallback, default):
+    """Значение переменной: сначала основное имя, затем запасное, затем умолчание."""
+    return os.getenv(name) or os.getenv(fallback) or default
+
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('NAME'),
-        'USER': os.getenv('USER'),
-        'PASSWORD': os.getenv('PASSWORD'),
-        'HOST': os.getenv('HOST'),
-        'PORT': os.getenv('PORT'),
+        'NAME': env('DB_NAME', 'POSTGRES_DB', 'tropflow'),
+        'USER': env('DB_USER', 'POSTGRES_USER', 'tropflow'),
+        'PASSWORD': env('DB_PASSWORD', 'POSTGRES_PASSWORD', ''),
+        'HOST': env('DB_HOST', 'POSTGRES_HOST', 'localhost'),
+        'PORT': env('DB_PORT', 'POSTGRES_PORT', '5432'),
     }
 }
 
@@ -134,10 +148,22 @@ USE_TZ = True
 STATIC_URL = 'static/'
 STATIC_ROOT = BASE_DIR / 'staticfiles'   # для сбора статики
 
+# Медиафайлы, загруженные пользователями
+MEDIA_URL = 'media/'
+MEDIA_ROOT = BASE_DIR / 'media'
+
 # CORS: разрешённые домены фронтенда
 CORS_ALLOWED_ORIGINS = [
     origin.strip()
     for origin in os.getenv('CORS_ALLOWED_ORIGINS', '').split(',')
+    if origin.strip()
+]
+
+# Доверенные источники для CSRF (нужны для входа в админку и Swagger за Nginx).
+# Формат — со схемой: http:// или https://, через запятую.
+CSRF_TRUSTED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv('CSRF_TRUSTED_ORIGINS', '').split(',')
     if origin.strip()
 ]
 

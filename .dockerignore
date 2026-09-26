@@ -1,0 +1,40 @@
+# Секреты никогда не попадают в образ — переменные передаются через docker compose
+.env
+.env.template
+
+# Git и IDE
+.git
+.github
+.gitignore
+.idea
+.vscode
+
+# Виртуальные окружения
+.venv
+venv
+
+# Python-мусор
+__pycache__
+*.py[cod]
+*.egg-info
+
+# Django / Celery артефакты
+*.sqlite3
+celerybeat-schedule*
+media
+staticfiles
+
+# Тесты: конфиги (.flake8, .coveragerc, pytest.ini, conftest.py) нужны в образе,
+# а кэши и отчёты — нет
+.pytest_cache
+pytest-cache-files-*
+.coverage
+coverage.xml
+htmlcov
+tmp
+
+# Документация и файлы docker (внутри образа не нужны)
+*.md
+docker-compose*.yml
+Dockerfile
+Makefile

@@ -1,0 +1,235 @@
+# =============================================================================
+#  TropFlow — запуск всего проекта одной командой:
+#
+#      docker compose up -d --build
+#
+#  Сервисы:
+#    nginx        — единственный сервис с внешним доступом (порт 80),
+#                   отдаёт статику и проксирует запросы в web
+#    web          — Django + Gunicorn (миграции и collectstatic при старте)
+#    db           — PostgreSQL (только внутри docker-сети)
+#    redis        — брокер и хранилище результатов Celery
+#    celery       — воркер: отправка напоминаний в Telegram
+#    celery-beat  — планировщик периодических задач (django_celery_beat)
+#
+#  Переменные окружения берутся из файла .env (см. .env.example).
+# =============================================================================
+
+name: tropflow
+
+# -----------------------------------------------------------------------------
+#  Общее окружение python-сервисов (web, celery, celery-beat).
+#  Внутри docker-сети база и Redis доступны по именам сервисов (db, redis),
+#  а не по localhost, поэтому DB_HOST и REDIS_HOST здесь переопределяются.
+#
+#  Переменные DB_* передаются явно, а не через env_file: в .env есть ключ USER,
+#  а это имя уже занято в любом Linux-образе (текущий пользователь), и через
+#  env_file он попал бы в контейнер, сломав подключение Django к базе.
+# -----------------------------------------------------------------------------
+x-app-environment: &app-environment
+  # --- Django ---
+  DJANGO_SETTINGS_MODULE: config.settings
+  SECRET_KEY_DJANGO: "${SECRET_KEY_DJANGO:?Задайте SECRET_KEY_DJANGO в файле .env}"
+  DEBUG: "${DEBUG:-False}"
+  ALLOWED_HOSTS: "${ALLOWED_HOSTS:-localhost,127.0.0.1}"
+  CORS_ALLOWED_ORIGINS: "${CORS_ALLOWED_ORIGINS:-}"
+  CSRF_TRUSTED_ORIGINS: "${CSRF_TRUSTED_ORIGINS:-}"
+  TIME_ZONE: "${TIME_ZONE:-Asia/Yekaterinburg}"
+  # --- PostgreSQL: имена должны совпадать у сервиса db и у приложения ---
+  DB_NAME: "${POSTGRES_DB:-tropflow}"
+  DB_USER: "${POSTGRES_USER:-tropflow}"
+  DB_PASSWORD: "${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в файле .env}"
+  DB_HOST: db
+  DB_PORT: "5432"
+  # --- Redis ---
+  REDIS_HOST: redis
+  REDIS_PORT: "6379"
+  # --- Telegram ---
+  TELEGRAM_BOT_TOKEN: "${TELEGRAM_BOT_TOKEN:-}"
+  # --- Gunicorn ---
+  GUNICORN_WORKERS: "${GUNICORN_WORKERS:-3}"
+
+services:
+
+  # ---------------------------------------------------------------------------
+  #  База данных. Наружу порт не публикуется: снаружи база не нужна,
+  #  приложение обращается к ней по имени сервиса внутри docker-сети.
+  #  Данные сохраняются в именованном томе postgres_data.
+  # ---------------------------------------------------------------------------
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: "${POSTGRES_DB:-tropflow}"
+      POSTGRES_USER: "${POSTGRES_USER:-tropflow}"
+      POSTGRES_PASSWORD: "${POSTGRES_PASSWORD:?Задайте POSTGRES_PASSWORD в файле .env}"
+      PGDATA: /var/lib/postgresql/data/pgdata
+      TZ: "${TIME_ZONE:-Asia/Yekaterinburg}"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    expose:
+      - "5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+  # ---------------------------------------------------------------------------
+  #  Redis: брокер сообщений и result backend для Celery.
+  #  Наружу не публикуется. Персистентность отключена намеренно: очередь
+  #  задач и расписание beat восстанавливаются автоматически.
+  # ---------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    command: redis-server --save "" --appendonly no
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+  # ---------------------------------------------------------------------------
+  #  Django-приложение под Gunicorn. Наружу порт не публикуется:
+  #  снаружи доступ идёт только через Nginx (порт 80).
+  #
+  #  Миграции и сбор статики выполняются при старте (RUN_MIGRATIONS=True),
+  #  причём только этим сервисом, чтобы контейнеры не делали этого
+  #  одновременно. Статика попадает в общий том static_data, который
+  #  в режиме read-only монтируется в Nginx.
+  # ---------------------------------------------------------------------------
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tropflow-web
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "True"
+    volumes:
+      - static_data:/app/staticfiles
+      - media_data:/app/media
+    expose:
+      - "8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      # 127.0.0.1, а не localhost: localhost в контейнере может резолвиться
+      # в IPv6 (::1), а Gunicorn слушает только IPv4
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/swagger/?format=openapi"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+  # ---------------------------------------------------------------------------
+  #  Воркер Celery — выполняет задачи из tg/tasks.py (напоминания в Telegram).
+  #  Внешнее подключение не нужно: порты не публикуются.
+  #  Использует тот же образ, что и web: отличается только команда запуска.
+  # ---------------------------------------------------------------------------
+  celery:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tropflow-web
+    command: celery -A config worker -l info --concurrency 2
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "False"
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD-SHELL", "celery -A config inspect ping -d celery@$$HOSTNAME || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+  # ---------------------------------------------------------------------------
+  #  Celery beat — планировщик периодических задач.
+  #  Расписание (проверка привычек каждую минуту) хранится в базе,
+  #  планировщик — django_celery_beat.schedulers:DatabaseScheduler.
+  # ---------------------------------------------------------------------------
+  celery-beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: tropflow-web
+    command: celery -A config beat -l info --scheduler django_celery_beat.schedulers:DatabaseScheduler
+    environment:
+      <<: *app-environment
+      RUN_MIGRATIONS: "False"
+    volumes:
+      - beat_data:/app/run
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      web:
+        condition: service_started
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+  # ---------------------------------------------------------------------------
+  #  Nginx: единственный сервис, доступный снаружи (порт 80 → WEB_PORT на хосте).
+  #  Отдаёт статику и медиа прямо с диска (тома только для чтения) и
+  #  проксирует остальные запросы в web.
+  # ---------------------------------------------------------------------------
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${WEB_PORT:-8000}:80"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - static_data:/app/staticfiles:ro
+      - media_data:/app/media:ro
+    depends_on:
+      web:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "--quiet", "--tries=1", "--spider", "http://127.0.0.1/health/"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    restart: unless-stopped
+    networks:
+      - tropflow
+
+# -----------------------------------------------------------------------------
+#  Именованные тома: данные БД, статика, медиафайлы и файл расписания beat
+#  не теряются при пересоздании контейнеров.
+# -----------------------------------------------------------------------------
+volumes:
+  postgres_data:
+  static_data:
+  media_data:
+  beat_data:
+
+networks:
+  tropflow:
+    driver: bridge

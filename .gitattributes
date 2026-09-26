@@ -1,0 +1,11 @@
+# Единые переводы строк во всех текстовых файлах (LF).
+# Без этого Windows-версия Git конвертирует .env в CRLF,
+# и на Linux-сервере значения читаются с лишним \r.
+* text=auto eol=lf
+
+# Бинарные файлы не трогаем
+*.png binary
+*.jpg binary
+*.ico binary
+*.woff binary
+*.woff2 binary
