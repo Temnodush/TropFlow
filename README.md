@@ -266,9 +266,15 @@ celery -A config worker -l info -P solo    # Windows
 celery -A config beat -l info
 ```
 
-При запуске без Docker в `.env` должны быть `REDIS_HOST=127.0.0.1`
-и параметры базы `POSTGRES_*`; Django читает их как `DB_*` через
-`config/settings.py`.
+При запуске без Docker в `.env` должны быть заполнены `REDIS_HOST=127.0.0.1`
+и параметры базы `POSTGRES_DB` / `POSTGRES_USER` / `POSTGRES_PASSWORD`.
+`config/settings.py` читает их напрямую — те же ключи, что использует
+контейнер базы, поэтому отдельный набор переменных для локального запуска
+не нужен.
+
+Исключение — хост базы: в Docker он равен имени сервиса (`db`), и это
+значение подставляет `docker-compose.yml`. Локально хост берётся из
+`POSTGRES_HOST`, а если переменная не задана — используется `localhost`.
 
 ## Деплой на сервер (Docker)
 

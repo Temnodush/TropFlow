@@ -78,18 +78,25 @@ WSGI_APPLICATION = 'config.wsgi.application'
 # Database
 # https://docs.djangoproject.com/en/6.0/ref/settings/#databases
 #
-# Значения DB_* передаются сервису через docker compose (см. docker-compose.yml):
-# внутри docker-сети база доступна по имени сервиса db, а не по localhost.
-# Значения по умолчанию нужны для запуска без Docker и для тестов.
+# Параметры подключения берутся из переменных окружения.
+# В Docker их подставляет docker-compose.yml в виде DB_* (там хост — сервис db,
+# а не localhost). При запуске без Docker значения читаются из .env, где
+# используются те же имена, что и у контейнера базы — POSTGRES_*.
+
+
+def env(name, fallback, default):
+    """Значение переменной: сначала основное имя, затем запасное, затем умолчание."""
+    return os.getenv(name) or os.getenv(fallback) or default
+
 
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.getenv('DB_NAME', 'tropflow'),
-        'USER': os.getenv('DB_USER', 'tropflow'),
-        'PASSWORD': os.getenv('DB_PASSWORD', ''),
-        'HOST': os.getenv('DB_HOST', 'localhost'),
-        'PORT': os.getenv('DB_PORT', '5432'),
+        'NAME': env('DB_NAME', 'POSTGRES_DB', 'tropflow'),
+        'USER': env('DB_USER', 'POSTGRES_USER', 'tropflow'),
+        'PASSWORD': env('DB_PASSWORD', 'POSTGRES_PASSWORD', ''),
+        'HOST': env('DB_HOST', 'POSTGRES_HOST', 'localhost'),
+        'PORT': env('DB_PORT', 'POSTGRES_PORT', '5432'),
     }
 }
 
