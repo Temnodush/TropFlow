@@ -137,12 +137,20 @@ jobs:
           if-no-files-found: ignore
 
   # ---------------------------------------------------------------------------
-  #  3. Сборка Docker-образа: проверяем, что образ вообще собирается
+  #  3. Сборка Docker-образов: проверяем, что весь стек вообще собирается
   # ---------------------------------------------------------------------------
   build:
     name: Build (Docker image)
     runs-on: ubuntu-latest
     needs: test
+
+    # Переменные нужны только для разбора docker-compose.yml: в нём
+    # SECRET_KEY_DJANGO и POSTGRES_PASSWORD помечены обязательными (${VAR:?}),
+    # а файла .env на раннере нет — он в .gitignore. В образ эти значения
+    # не попадают: они участвуют только в интерполяции конфига.
+    env:
+      SECRET_KEY_DJANGO: ci-build-placeholder-key
+      POSTGRES_PASSWORD: ci-build-placeholder-password
 
     steps:
       - name: Check out code
@@ -167,9 +175,6 @@ jobs:
         run: docker compose build
 
       - name: Validate compose config
-        env:
-          SECRET_KEY_DJANGO: ci-only-secret-key
-          POSTGRES_PASSWORD: ci-only-password
         run: docker compose config --quiet
 
       - name: Check entrypoint syntax
